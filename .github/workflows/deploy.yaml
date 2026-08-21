@@ -67,6 +67,7 @@ jobs:
         run: |
           docker build -t $REGISTRY/$REPOSITORY:$IMAGE_TAG .
           docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
+        working-directory: ./aws-terraform-github-actions-cicd
       - name: Deploy Docker Image To EC2
         env:
           REGISTRY: ${{steps.login-ecr.outputs.registry}}
