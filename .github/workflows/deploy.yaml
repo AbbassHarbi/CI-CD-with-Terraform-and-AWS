@@ -7,7 +7,7 @@ on:
 
 env:
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY : ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   AWS_SSH_KEY: ${{ secrets.AWS_SSH_KEY }}
   AWS_SSH_PKEY: ${{ secrets.AWS_SSH_PKEY }}
   AWS_TF_STATE_BUCKET_NAME: ${{ secrets.AWS_TF_STATE_BUCKET_NAME }}
@@ -16,19 +16,23 @@ env:
 jobs:
   deploy-infra:
     runs-on: ubuntu-latest
-    outputs: 
+    outputs:
       instance_public_ip: ${{ steps.get_ip.outputs.EC2_PUBLIC_IP }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_wrapper: false
+
       - name: Init
         id: init
-        run: terraform init -backend-config="bucket=$AWS_TF_STATE_BUCKET_NAME" -backend-config="region=$AWS_REGION" 
+        run: terraform init -backend-config="bucket=$AWS_TF_STATE_BUCKET_NAME" -backend-config="region=$AWS_REGION"
         working-directory: ./Terraform
+
       - name: Terraform Plan
         id: plan
         run: |
@@ -39,37 +43,46 @@ jobs:
             -var="key_name=deployer_key" \
             -out=PLAN
         working-directory: ./Terraform
+
       - name: terraform apply
         id: apply
         run: terraform apply PLAN
         working-directory: ./Terraform
+
       - name: Read EC2 Public IP
         id: get_ip
         run: |
           echo "EC2_PUBLIC_IP=$(terraform output -raw instance_public_ip)" >> "$GITHUB_OUTPUT"
-          working-directory: ./Terraform
+        working-directory: ./Terraform
+
   deploy-app:
     runs-on: ubuntu-latest
     needs: deploy-infra
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+
       - name: Set IP env Variable
-        run: echo "INSTANCE_PUBLIC_IP=${{needs.deploy-infra.outputs.instance_public_ip}}" >> $GITHUB_ENV
+        run: echo "INSTANCE_PUBLIC_IP=${{ needs.deploy-infra.outputs.instance_public_ip }}" >> "$GITHUB_ENV"
+
       - name: Login TO ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
+
       - name: Build and Push Docker Image
+        working-directory: ./aws-terraform-github-actions-cicd
         env:
-          REGISTRY: ${{steps.login-ecr.outputs.registry}}
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           REPOSITORY: node.app
           IMAGE_TAG: ${{ github.sha }}
-          run: |
-            docker build -t $REGISTRY/$REPOSITORY:$IMAGE_TAG . \
-            docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
+        run: |
+          docker build -t "$REGISTRY/$REPOSITORY:$IMAGE_TAG" .
+          docker push "$REGISTRY/$REPOSITORY:$IMAGE_TAG"
+
       - name: Deploy Docker Image To EC2
         env:
-          REGISTRY: ${{steps.login-ecr.outputs.registry}}
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           REPOSITORY: node.app
           IMAGE_TAG: ${{ github.sha }}
           AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
