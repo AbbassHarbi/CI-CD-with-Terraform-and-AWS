@@ -29,12 +29,15 @@ jobs:
         working-directory: ./Terraform
       - name: terraform Plan
         id: plan
-        run: terraform plan \
-          -var=" region=$AWS_REGION " \
-          -var=" public_key=$AWS_SSH_PKEY " \
-          -var=" private_key=$AWS_SSH_KEY " \ 
-          -var=" key_name= deployer_key" \
-          -out=PLAN
+              - name: Terraform Plan
+        id: plan
+        run: |
+          terraform plan \
+            -var="region=$AWS_REGION" \
+            -var="public_key=$AWS_SSH_KEY" \
+            -var="private_key=$AWS_SSH_PKEY" \
+            -var="key_name=deployer_key" \
+            -out=PLAN
         working-directory: ./Terraform
       - name: terraform apply
         id: apply
