@@ -48,6 +48,15 @@ jobs:
       - name: Run TFLint
         run: tflint --format compact
         working-directory: ./Terraform
+      - name: IaC Security Scan
+        id: IaC_checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ./Terraform
+          quiet: false
+          soft_fail: true
+          output_format: cli
+          framework: terraform
       - name: Terraform Plan
         id: plan
         run: |
