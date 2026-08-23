@@ -25,9 +25,15 @@ jobs:
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_wrapper: false
+      - name: Format Terraform Check
+        run: terraform fmt -check -recursive -diff
+        working-directory: ./Terraform
       - name: Init
         id: init
         run: terraform init -backend-config="bucket=$AWS_TF_STATE_BUCKET_NAME" -backend-config="region=$AWS_REGION" 
+        working-directory: ./Terraform
+      - name: Terraform Validate
+        run: terraform validate -no-color
         working-directory: ./Terraform
       - name: Terraform Plan
         id: plan
