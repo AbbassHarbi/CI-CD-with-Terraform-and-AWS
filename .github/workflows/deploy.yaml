@@ -35,6 +35,19 @@ jobs:
       - name: Terraform Validate
         run: terraform validate -no-color
         working-directory: ./Terraform
+      - name: Terraform TFLint Setup
+        uses: terraform-linters/setup-tflint@v6
+        with:
+          version: v0.64.0
+          cache: true
+      - name: Initialize TFLint
+        run: tflint --init
+        working-directory: ./Terraform
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run TFLint
+        run: tflint --format compact
+        working-directory: ./Terraform
       - name: Terraform Plan
         id: plan
         run: |
