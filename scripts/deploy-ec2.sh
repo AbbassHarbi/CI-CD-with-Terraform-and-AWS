@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -eu
 
+# --- 0. Ensure the host toolbox (idempotent: fast no-op on a capable host) ---
+if ! command -v docker >/dev/null 2>&1 \
+   || ! command -v aws    >/dev/null 2>&1 \
+   || ! command -v curl   >/dev/null 2>&1; then
+  apt-get update
+  apt-get install -y docker.io awscli curl
+fi
+systemctl enable --now docker
+
 # --- 1. Authenticate EC2's Docker client to ECR using the instance role ---
 TOKEN="$(aws ecr get-login-password --region "@REGION@")"
 printf '%s' "$TOKEN" | docker login --username AWS --password-stdin "@REGISTRY@"

@@ -27,6 +27,11 @@ resource "aws_instance" "server" {
     http_put_response_hop_limit = 1
     instance_metadata_tags      = "disabled"
   }
+  ebs_optimized = true
+  root_block_device {
+    encrypted   = true
+    volume_type = "gp3"
+  }
 
   tags = {
     Name        = "ec2_1"
