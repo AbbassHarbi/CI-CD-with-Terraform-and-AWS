@@ -41,10 +41,11 @@ resource "aws_instance" "server" {
 
 
 resource "aws_security_group" "SG1" {
+  description = "CI/CD application server: public HTTP (port 80) only; management via SSM"
   egress = [
     {
       cidr_blocks      = ["0.0.0.0/0"]
-      description      = "OutBound Connection for our EC2 Instance"
+      description      = "Outbound Connection for our EC2 Instance"
       from_port        = 0
       to_port          = 0
       protocol         = "-1"
@@ -65,7 +66,7 @@ resource "aws_security_group" "SG1" {
       self             = false
       ipv6_cidr_blocks = []
       security_groups  = []
-      description      = "Allow HTTP inbout traffic to our EC2"
+      description      = "Allow HTTP inbound traffic to our EC2"
     }
   ]
 }

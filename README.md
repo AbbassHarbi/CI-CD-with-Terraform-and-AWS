@@ -2,9 +2,9 @@
 
 [![CI/CD with Terraform](https://github.com/AbbassHarbi/CI-CD-with-Terraform-and-AWS/actions/workflows/deploy.yaml/badge.svg)](https://github.com/AbbassHarbi/CI-CD-with-Terraform-and-AWS/actions/workflows/deploy.yaml)
 
-An end-to-end DevOps portfolio project that provisions AWS infrastructure with Terraform, builds and publishes a Docker image to Amazon ECR, and deploys the commit-tagged image to Amazon EC2 through GitHub Actions.
+An end-to-end DevOps portfolio project that provisions AWS infrastructure with Terraform, builds and publishes a Docker image to Amazon ECR, and deploys the commit-tagged image to Amazon EC2 through GitHub Actions — with AWS Systems Manager as the sole deployment and management channel.
 
-> **Project status:** The working CI/CD baseline is complete. Terraform formatting, validation, and TFLint quality gates are implemented. IaC security scanning, container scanning, observability, and access hardening are the next planned enhancements.
+> **Project status:** The delivery pipeline is complete and hardened. Deployment runs entirely through Systems Manager (the public SSH surface has been retired end to end), pre-apply quality gates are enforced by the workflow (format, validation, TFLint, and Checkov in reporting mode), and the instance runs with an encrypted root volume and IMDSv2 required. The next tracked phases are container security, a load-balanced public endpoint, and GitHub OIDC.
 
 ![Project overview](docs/images/project-overview.png)
 
@@ -56,6 +56,7 @@ The project focuses on:
 - Artifact traceability through Git commit SHA tags
 - Remote Terraform state
 - Separation of CI publisher and EC2 runtime identities
+- Deployment and management without public SSH (Systems Manager)
 - Pre-apply Terraform quality gates
 - Practical troubleshooting across Git, YAML, Bash, Terraform, IAM, ECR, Docker, and EC2
 
@@ -73,22 +74,22 @@ flowchart LR
         FMT --> INIT[Terraform Init]
         INIT --> VAL[Terraform Validate]
         VAL --> LINT[TFLint]
-        LINT --> PLAN[Terraform Plan]
+        LINT --> CV[Checkov reporting mode]
+        CV --> PLAN[Terraform Plan]
         PLAN --> APPLY[Terraform Apply]
     end
 
     INIT <--> S3[(Private S3 State)]
     APPLY --> EC2[Amazon EC2]
     APPLY --> SG[Security Group]
-    APPLY --> KP[EC2 Key Pair]
     APPLY --> IP[IAM Instance Profile]
 
     subgraph APP[Application job]
         GA --> BUILD[Docker Build]
         BUILD --> TAG[Tag with Git SHA]
         TAG --> ECR[(Amazon ECR)]
-        ECR --> SSH[SSH Deployment]
-        SSH --> EC2
+        ECR --> SSM[SSM Run Command]
+        SSM --> EC2
     end
 
     EC2 -->|Pull exact image| ECR
@@ -102,13 +103,15 @@ flowchart LR
 GitHub Actions identity
   ├── Terraform state access
   ├── AWS infrastructure deployment
-  └── ECR image publishing
+  ├── ECR image publishing
+  └── SSM command delivery (tag-scoped to the project instance)
 
 EC2 runtime identity
-  └── ECR read/pull access through an instance profile
+  ├── ECR read/pull access through an instance profile
+  └── SSM agent channel through the same instance profile
 ```
 
-The GitHub runner and EC2 instance are separate execution environments. Each authenticates to ECR independently for its own responsibility.
+The GitHub runner and EC2 instance are separate execution environments. Each authenticates to AWS independently for its own responsibilities. No long-lived credential or SSH key ever reaches the instance.
 
 ---
 
@@ -132,9 +135,10 @@ Checkout repository
   → Validate Terraform
   → Setup and initialize TFLint
   → Run TFLint
+  → Run Checkov (reporting mode)
   → Create saved Terraform plan
   → Apply saved plan
-  → Publish EC2 public IP as a job output
+  → Publish EC2 instance ID as a job output
 ```
 
 ### 2. `deploy-app`
@@ -143,16 +147,17 @@ This job waits for `deploy-infra` to succeed.
 
 ```text
 Checkout repository
-  → Receive EC2 public IP
+  → Receive EC2 instance ID from the infrastructure job
   → Authenticate GitHub runner to ECR
   → Build Docker image
   → Tag image with Git commit SHA
   → Push image to node.app repository
-  → Connect to EC2 over SSH
-  → Authenticate EC2 to ECR using its IAM role
-  → Pull exact commit-tagged image
-  → Replace and start the application container
+  → Send a Run Command to the tagged instance (script templated from scripts/deploy-ec2.sh)
+  → On EC2: ensure the host toolbox, authenticate to ECR with the instance role,
+    pull the exact commit-tagged image, replace the container, health-check the application
 ```
+
+Deployment is a Systems Manager Run Command: the workflow targets the instance by ID (never by address), waits for terminal state, and fails the pipeline when the remote script exits non-zero. The remote script is a repository-tracked template whose run-specific values (registry, repository, commit SHA, region) are substituted before submission, and the payload is JSON-encoded with `jq`.
 
 ### Artifact handoff
 
@@ -162,6 +167,8 @@ The Docker image is the artifact passed from CI to CD:
 CI artifact: ECR/node.app:<git-commit-sha>
 CD result:   The same image running on EC2
 ```
+
+Deployment by immutable image digest is the next container-security step (see Roadmap).
 
 ---
 
@@ -178,10 +185,10 @@ CD result:   The same image running on EC2
 
 ### Infrastructure as Code
 
-- EC2 instance provisioning
+- EC2 instance provisioning (encrypted root volume, EBS-optimized, IMDSv2 required)
 - Security-group provisioning
-- EC2 public-key registration
 - IAM instance-profile association
+- SSM managed-instance policy attachment (Terraform-managed)
 - Private S3 remote state
 - Terraform outputs passed between workflow jobs
 
@@ -191,14 +198,16 @@ CD result:   The same image running on EC2
 - Saved Terraform execution plan
 - Automatic infrastructure reconciliation
 - Automated image build, push, pull, and container replacement
+- Systems Manager Run Command deployment with in-script health check
 - Cross-job orchestration with `needs` and job outputs
 
-### Terraform quality gates
+### Security posture
 
-- Canonical formatting check
-- Terraform structural validation
-- TFLint core and AWS provider linting
-- Plan and Apply blocked when a required gate fails
+- No public SSH: deployment and management via Systems Manager only, scoped by instance tags
+- IMDSv2 required on the instance (SSRF hardening)
+- Encrypted root volume, EBS-optimized storage
+- Least-privilege policies separated by responsibility; permissions removed when their consumer was removed
+- Commit-SHA traceability between source and deployed image
 
 ---
 
@@ -217,7 +226,8 @@ CD result:   The same image running on EC2
 | Containerization | Docker |
 | Application | Node.js and Express |
 | Terraform linting | TFLint with AWS ruleset |
-| Deployment transport | SSH |
+| IaC security scanning | Checkov (reporting mode) |
+| Deployment and management transport | AWS Systems Manager (Run Command, Session Manager) |
 
 ---
 
@@ -238,6 +248,8 @@ CD result:   The same image running on EC2
 │   ├── Dockerfile
 │   ├── package.json
 │   └── package-lock.json
+├── scripts/
+│   └── deploy-ec2.sh
 ├── docs/
 │   └── images/
 │       └── project-overview.png
@@ -245,7 +257,7 @@ CD result:   The same image running on EC2
 └── README.md
 ```
 
-Generated files, state, private keys, credentials, saved plans, and `node_modules/` must not be committed.
+Generated files, state, credentials, saved plans, and `node_modules/` are not committed.
 
 ---
 
@@ -254,7 +266,7 @@ Generated files, state, private keys, credentials, saved plans, and `node_module
 The infrastructure job runs checks from fastest and least consequential to most environment-aware:
 
 ```text
-fmt → init → validate → TFLint → plan → apply
+fmt → init → validate → TFLint → Checkov (reporting) → plan → apply
 ```
 
 ### Format check
@@ -280,7 +292,19 @@ tflint --init
 tflint --format compact
 ```
 
-Adds Terraform and AWS-specific quality checks. The project uses a committed `.tflint.hcl` configuration for reproducibility.
+Adds Terraform and AWS-specific quality checks (pinned CLI and AWS ruleset versions, committed `.tflint.hcl`). Findings fail the job before Plan/Apply.
+
+### Checkov (reporting mode)
+
+```yaml
+uses: bridgecrewio/checkov-action@v12
+with:
+  directory: ./Terraform
+  framework: terraform
+  soft_fail: true
+```
+
+Scans the configuration against IaC security policies. Findings are triaged one by one (fix / owned exception with removal plan / evidenced false positive). Enforcement (`soft_fail: false`) is the next step after the remaining documented exceptions are implemented.
 
 ### Plan
 
@@ -309,19 +333,20 @@ The current baseline uses a dedicated IAM user whose credentials are stored as G
 Its permissions are separated by responsibility:
 
 - Terraform state access to the intended S3 path
-- Required EC2 and instance-profile deployment actions
-- ECR authentication and image-publishing actions
+- EC2 and instance-profile deployment operations for `us-east-1` (key-pair operations were removed when SSH was retired)
+- ECR authentication and image publishing, scoped to the project repository
+- Constrained `ssm:SendCommand`, conditioned on the instance tags `Environment=dev` and `Name=ec2_1`
 - Constrained `iam:PassRole` for the EC2 runtime role
 
 ### EC2 runtime identity
 
 The EC2 instance receives the `EC2ECR-AUTH` role through an instance profile.
 
-The role provides ECR read-only behavior so EC2 can authenticate and pull images without storing permanent AWS credentials on the server.
+The role provides ECR read-only behavior and the SSM managed-instance core policy (the attachment is Terraform-managed), so EC2 can authenticate to ECR and receive commands without any stored credential on the server.
 
 ### `iam:PassRole`
 
-`PassRole` allows the deployment identity to configure EC2 with the approved role. It does not let GitHub inherit or assume the EC2 role.
+`PassRole` allows the deployment identity to configure EC2 with the approved role. It does not let GitHub inherit or assume the role.
 
 ---
 
@@ -337,10 +362,10 @@ Before deployment, the current baseline expects:
 - An IAM role named `EC2ECR-AUTH` that:
   - Trusts `ec2.amazonaws.com`
   - Has ECR read-only permissions
-- A matching OpenSSH public/private key pair
-- GitHub Actions secrets listed below
+  - Has the SSM managed-instance core policy (Terraform-managed attachment)
+- An AMI that ships the SSM Agent (the project AMI does)
 
-> The S3 backend bucket, ECR repository, and `EC2ECR-AUTH` role are currently bootstrap prerequisites rather than resources fully managed by this Terraform root module.
+> The S3 backend bucket, ECR repository, and the `EC2ECR-AUTH` role itself are currently bootstrap prerequisites rather than resources fully managed by this Terraform root module. Moving them under Terraform management is tracked in the roadmap.
 
 ---
 
@@ -358,10 +383,8 @@ Repository Settings → Secrets and variables → Actions
 | `AWS_SECRET_ACCESS_KEY` | Authenticates the matching AWS credential |
 | `AWS_TF_STATE_BUCKET_NAME` | Selects the private Terraform state bucket |
 | `AWS_REGION` | Selects the AWS region |
-| `AWS_SSH_KEY` | Private SSH key used by the deployment action in the current baseline |
-| `AWS_SSH_PKEY` | OpenSSH public key registered with EC2 in the current baseline |
 
-> The two SSH secret names are retained for compatibility with the current workflow but are counterintuitive. A future cleanup should rename them to `EC2_SSH_PRIVATE_KEY` and `EC2_SSH_PUBLIC_KEY`.
+The former SSH secrets were removed from the workflow and deleted from the repository when the SSH surface was retired.
 
 Never commit secret values to the repository.
 
@@ -410,14 +433,19 @@ Confirm `node.app` contains an image tagged with the triggering Git commit SHA.
 
 ### EC2 container
 
-Connect to EC2 and inspect:
+Open an SSM Session Manager shell on the instance (no SSH is required or available) and inspect:
 
 ```bash
-sudo docker ps -a
-sudo docker logs myappcontainer
-sudo docker images
-sudo ss -lntp | grep ':80'
+docker ps -a
+docker logs myappcontainer
+docker images
+ss -lntp | grep ':80'
+curl -i http://localhost/
 ```
+
+### Systems Manager
+
+The instance appears as a managed node in Fleet Manager, and the command history shows each deployment with its commit-labeled comment.
 
 ### Application
 
@@ -432,6 +460,8 @@ From a browser:
 ```text
 http://<EC2_PUBLIC_IP>/
 ```
+
+The current public IP is visible in the EC2 Console. A stable, load-balanced endpoint replaces it in the next architecture phase.
 
 Expected response:
 
@@ -461,6 +491,7 @@ The project was completed through systematic, layer-by-layer troubleshooting.
 | Missing ECR repository | Repository not created | Created `node.app` |
 | Old ECR login syntax | AWS CLI v1/v2 difference | Used `get-login-password` |
 | HTTP connection refused | Container exited/runtime mismatch | Upgraded Node and fixed container command |
+| Metadata options 403 on apply | Deployment policy lacked `ec2:ModifyInstanceMetadataOptions` (a distinct API from `ModifyInstanceAttribute`) | Added exactly that action to the region-scoped statement |
 
 ---
 
@@ -469,26 +500,35 @@ The project was completed through systematic, layer-by-layer troubleshooting.
 ### Current strengths
 
 - No credential values committed to Git
-- Private remote Terraform state
-- Scoped state access
-- Separate CI publisher and EC2 runtime identities
-- ECR read-only role for EC2
-- Commit-SHA image traceability
-- Pre-apply Terraform quality gates
+- Private remote Terraform state with scoped access
+- EC2 receives temporary role credentials; CI publisher and EC2 runtime identities are separated
+- `iam:PassRole` constrained to the intended role and service
+- No public SSH: deployment and management flow exclusively through Systems Manager, scoped by instance tags
+- IMDSv2 required on the instance; the application container is locked out of the credentials channel by hop limit
+- Encrypted root volume and EBS-optimized storage
+- Image tags connect artifacts to source commits
+- Pre-apply quality gates (format, validation, TFLint, Checkov reporting)
+- Least-privilege policies that evolve with the code — permissions are removed when their consumer is removed
 
 ### Current limitations
 
-The project is a working portfolio baseline, not a claim of full production readiness.
+Documented, owned exceptions (each with a removal plan, rather than suppressed scanner findings):
 
-- Long-lived AWS access keys are stored in GitHub Secrets
-- SSH port 22 is open broadly in the tutorial security group
-- Terraform Apply and deployment run automatically after pushes to `main`
-- Deployment uses an older third-party SSH action
-- ECR, backend bootstrap, and runtime IAM role are not fully managed by the root module
-- No enforced IaC security scanner yet
-- No image vulnerability gate yet
-- No automated health check or rollback
-- No CloudWatch dashboard or alarms yet
+- **Public HTTP on the instance (port 80 from all IPv4).** The application is intentionally a public plain-HTTP service; no load balancer or TLS exists yet. Removal plan: a load-balanced endpoint with the instance's inbound restricted to the load balancer's security group and the public IP removed.
+- **No detailed (1-minute) CloudWatch monitoring.** Deliberate cost decision for a single lab instance; basic 5-minute metrics remain available. Removal plan: enable when the observability phase is prioritized.
+
+Remaining hardening work:
+
+- Long-lived AWS access keys are stored in GitHub Secrets (replaced by GitHub OIDC in a tracked phase)
+- Terraform Apply and deployment run automatically after pushes to `main` (protected environment approval is tracked)
+- Checkov runs in reporting mode; enforcement follows the remaining exceptions
+- No container-image vulnerability gate yet (Trivy + ECR scan-on-push is the next phase)
+- Deployment uses commit-SHA tags; deployment by immutable digest is the next container-security step
+- No state locking/concurrency protection yet
+- ECR repository, backend bootstrap, and the runtime role are not yet fully managed by the root module
+- Security-group egress is broad (restriction is tracked after traffic inventory)
+- GitHub Actions are not yet pinned to reviewed immutable commits
+- No automated rollback; the deployment performs a post-deployment health check
 
 ---
 
@@ -505,7 +545,7 @@ Use the same backend, account, region, and required variables as the deployment.
 
 Do not delete Terraform-managed resources manually unless deliberately performing a documented recovery/import/state operation. Manual deletion creates state drift.
 
-The external bootstrap resources—such as the state bucket and manually created ECR/IAM resources—require separate cleanup decisions.
+The external bootstrap resources — such as the state bucket and the manually created ECR repository and role — require separate cleanup decisions.
 
 ---
 
@@ -516,13 +556,13 @@ The external bootstrap resources—such as the state bucket and manually created
 - [x] Terraform format gate
 - [x] Terraform validation
 - [x] TFLint with AWS ruleset
-- [ ] Checkov in reporting mode
-- [ ] Triage and remediate IaC findings
+- [x] Checkov in reporting mode
+- [x] Triage IaC findings (five closed; two documented exceptions with removal plans)
 - [ ] Enforce Checkov before Plan/Apply
 - [ ] Add protected environment approval before Apply
 - [ ] Add state locking/concurrency protection
 
-### Container security
+### Container security (next phase)
 
 - [ ] Add application tests and linting
 - [ ] Add Dockerfile linting
@@ -533,17 +573,18 @@ The external bootstrap resources—such as the state bucket and manually created
 ### Observability and reliability
 
 - [ ] Add application health endpoint
-- [ ] Add post-deployment smoke test
+- [x] Post-deployment health check (in-script, fails the pipeline)
 - [ ] Add rollback behavior
 - [ ] Send container/application logs to CloudWatch
 - [ ] Add CloudWatch dashboard
 - [ ] Add alarms and notifications
 
-### Access hardening
+### Access and network hardening
 
 - [ ] Replace long-lived GitHub AWS keys with OIDC
-- [ ] Replace public SSH deployment with AWS Systems Manager
-- [ ] Restrict security-group egress and ingress
+- [x] Replace public SSH deployment and management with AWS Systems Manager
+- [ ] Replace direct public HTTP with a load-balanced endpoint (inbound restricted to the load balancer, public IP removed)
+- [ ] Restrict security-group egress (ingress: port 22 already removed)
 - [ ] Pin GitHub Actions to reviewed immutable commits
 
 ---
