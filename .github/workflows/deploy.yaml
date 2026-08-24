@@ -8,8 +8,6 @@ on:
 env:
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY : ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  AWS_SSH_KEY: ${{ secrets.AWS_SSH_KEY }}
-  AWS_SSH_PKEY: ${{ secrets.AWS_SSH_PKEY }}
   AWS_TF_STATE_BUCKET_NAME: ${{ secrets.AWS_TF_STATE_BUCKET_NAME }}
   AWS_REGION: ${{ secrets.AWS_REGION }}
 
@@ -17,7 +15,6 @@ jobs:
   deploy-infra:
     runs-on: ubuntu-latest
     outputs: 
-      instance_public_ip: ${{ steps.get_ip.outputs.EC2_PUBLIC_IP }}
       instance_id: ${{ steps.get_instance_id.outputs.Instance_ID }}
     steps:
       - name: Checkout code
@@ -63,19 +60,11 @@ jobs:
         run: |
           terraform plan \
             -var="region=$AWS_REGION" \
-            -var="public_key=$AWS_SSH_PKEY" \
-            -var="private_key=$AWS_SSH_KEY" \
-            -var="key_name=deployer_key" \
             -out=PLAN
         working-directory: ./Terraform
       - name: terraform apply
         id: apply
         run: terraform apply PLAN
-        working-directory: ./Terraform
-      - name: Read EC2 Public IP
-        id: get_ip
-        run: |
-          echo "EC2_PUBLIC_IP=$(terraform output -raw instance_public_ip)" >> "$GITHUB_OUTPUT"
         working-directory: ./Terraform
       - name: Get Instance ID
         id: get_instance_id
