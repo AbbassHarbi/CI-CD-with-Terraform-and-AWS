@@ -89,3 +89,8 @@ output "instance_public_ip" {
   value     = aws_instance.server.public_ip
   sensitive = true
 }
+
+output "instance_id" {
+  value       = aws_instance.server.id
+  description = "EC2 instance ID used as the Systems Manager command target"
+}
