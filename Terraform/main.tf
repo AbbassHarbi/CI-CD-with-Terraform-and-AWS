@@ -69,6 +69,9 @@ resource "aws_security_group" "SG1" {
       description      = "Allow HTTP inbound traffic to our EC2"
     }
   ]
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_iam_instance_profile" "EC2ECR_IAMInstProf" {
