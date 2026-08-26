@@ -10,6 +10,7 @@ env:
   AWS_SECRET_ACCESS_KEY : ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   AWS_TF_STATE_BUCKET_NAME: ${{ secrets.AWS_TF_STATE_BUCKET_NAME }}
   AWS_REGION: ${{ secrets.AWS_REGION }}
+  ALERTS_EMAIL: ${{ secrets.ALERTS_EMAIL }}
 
 jobs:
   deploy-infra:
@@ -60,6 +61,7 @@ jobs:
         run: |
           terraform plan \
             -var="region=$AWS_REGION" \
+            -var="alerts_email=$ALERTS_EMAIL" \
             -out=PLAN
         working-directory: ./Terraform
       - name: terraform apply
