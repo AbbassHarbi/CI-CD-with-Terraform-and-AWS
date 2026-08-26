@@ -131,8 +131,10 @@ resource "aws_cloudwatch_dashboard" "app" {
         width  = 12
         height = 6
         properties = {
-          metrics = [["AWS/EC2", "CPUUtilization", "InstanceId", aws_instance.server.id]]
-          title   = "CPU (5-min)"
+          region      = var.region
+          annotations = {}
+          metrics     = [["AWS/EC2", "CPUUtilization", "InstanceId", aws_instance.server.id]]
+          title       = "CPU (5-min)"
         }
       },
       {
@@ -142,6 +144,8 @@ resource "aws_cloudwatch_dashboard" "app" {
         width  = 12
         height = 6
         properties = {
+          region      = var.region
+          annotations = {}
           metrics = [
             ["AWS/EC2", "NetworkIn", "InstanceId", aws_instance.server.id],
             ["AWS/EC2", "NetworkOut", "InstanceId", aws_instance.server.id]
@@ -156,6 +160,8 @@ resource "aws_cloudwatch_dashboard" "app" {
         width  = 12
         height = 6
         properties = {
+          region      = var.region
+          annotations = {}
           metrics = [
             ["AWS/EC2", "DiskReadBytes", "InstanceId", aws_instance.server.id],
             ["AWS/EC2", "DiskWriteBytes", "InstanceId", aws_instance.server.id]
